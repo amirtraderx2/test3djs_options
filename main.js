@@ -1,109 +1,151 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
-// --- 0. UI INJECTION (Control Icon & Dropdown) ---
-const uiHTML = `
-<div id="ui-wrapper" style="position: absolute; top: 20px; left: 20px; z-index: 1000; font-family: sans-serif;">
-    <div id="control-icon" style="cursor: pointer; background: #222; padding: 10px; border-radius: 50%; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; box-shadow: 0 0 10px rgba(0,0,0,0.5); border: 1px solid #444;">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00ffcc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+// --- 1. UI STRUCTURE (HTML/CSS) ---
+const layout = `
+<div id="container" style="display: flex; flex-direction: column; height: 100vh; background: #000; font-family: 'Segoe UI', sans-serif; overflow: hidden;">
+    <div id="viewport" style="flex: 7; position: relative; border-bottom: 2px solid #333;">
+        <div id="overlay" style="position: absolute; top: 15px; left: 15px; z-index: 10; background: rgba(0,0,0,0.8); padding: 12px; border-radius: 6px; border: 1px solid #00f2ff; color: #00f2ff; pointer-events: none;">
+            <b style="letter-spacing: 1px;">VOLATILITY SURFACE V1.0</b><br>
+            <small style="color: #ccc;">Hover mesh to sync Table</small>
+        </div>
+        <button id="exportBtn" style="position: absolute; top: 15px; right: 15px; z-index: 10; background: #00f2ff; color: #000; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.3s;">
+            EXPORT CSV
+        </button>
     </div>
-    <div id="settings-panel" style="display: none; margin-top: 10px; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px; border: 1px solid #444; color: white;">
-        <label style="display: block; margin-bottom: 5px; font-size: 12px;">LINE COLOR</label>
-        <select id="colorPicker" style="background: #333; color: #00ffcc; border: 1px solid #00ffcc; padding: 5px; width: 100%; outline: none; border-radius: 4px;">
-            <option value="0x00ffcc">Cyan</option>
-            <option value="0xff3366">Pink</option>
-            <option value="0xffff00">Yellow</option>
-            <option value="0x00ff00">Green</option>
-            <option value="0xffffff">White</option>
-        </select>
+    
+    <div id="dataframe-container" style="flex: 3; overflow-y: auto; background: #0a0a0a; color: #ddd; font-family: 'Consolas', monospace;">
+        <table id="optionTable" style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead style="position: sticky; top: 0; background: #1a1a1a; color: #00f2ff; box-shadow: 0 2px 5px rgba(0,0,0,0.5);">
+                <tr>
+                    <th style="padding: 10px; border-bottom: 1px solid #333; text-align: left;">STRIKE ($)</th>
+                    <th style="padding: 10px; border-bottom: 1px solid #333; text-align: left;">DTE (DAYS)</th>
+                    <th style="padding: 10px; border-bottom: 1px solid #333; text-align: left;">CALL IV (%)</th>
+                    <th style="padding: 10px; border-bottom: 1px solid #333; text-align: left;">PUT IV (%)</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
     </div>
 </div>
 `;
-document.body.insertAdjacentHTML('beforeend', uiHTML);
+document.body.innerHTML = layout;
 
-// UI Toggle Logic
-const icon = document.getElementById('control-icon');
-const panel = document.getElementById('settings-panel');
-icon.onclick = () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
-
-// 1. SCENE & RENDERER SETUP
+// --- 2. THREE.JS SCENE SETUP ---
+const viewport = document.getElementById('viewport');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050505);
+const camera = new THREE.PerspectiveCamera(50, viewport.clientWidth / viewport.clientHeight, 0.1, 1000);
+camera.position.set(15, 12, 15);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+viewport.appendChild(renderer.domElement);
 
-// 2. CAMERA
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(10, 10, 10);
-
-// 3. CONTROLS
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+scene.add(new THREE.GridHelper(20, 20, 0x222222, 0x111111));
 
-// 4. LIGHTING
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-scene.add(ambientLight);
+// --- 3. DATA & SURFACE GENERATION ---
+const strikeSteps = 20;
+const daySteps = 15;
+const tableBody = document.getElementById('tableBody');
+const csvRows = [["Strike", "DTE", "CallIV", "PutIV"]];
+const tableRowRefs = [];
 
-const pointLight = new THREE.PointLight(0xffffff, 200);
-pointLight.position.set(5, 10, 5);
-scene.add(pointLight);
-
-// 5. DATA GENERATION
-const strikes = [80, 90, 100, 110, 120];
-const expiries = [1, 2, 3, 4, 5];
-
-const getIV = (strike, time) => {
-    const smile = Math.pow((strike - 100), 2) / 500;
-    return (smile + (time * 0.1) + 0.2);
+const calcIV = (x, z, type) => {
+    const smile = 0.08 * Math.pow(x, 2);
+    const skew = type === 'put' ? x * -0.12 : x * -0.04;
+    return 0.15 + smile + skew + (z + 5) * 0.03;
 };
 
-// 6. GEOMETRY
-const segments = strikes.length - 1;
-const geometry = new THREE.PlaneGeometry(10, 10, segments, expiries.length - 1);
+const callGeo = new THREE.PlaneGeometry(10, 10, strikeSteps - 1, daySteps - 1);
+const callPos = callGeo.attributes.position;
 
-const positions = geometry.attributes.position;
-for (let i = 0; i < positions.count; i++) {
-    const xIndex = i % (segments + 1);
-    const zIndex = Math.floor(i / (segments + 1));
-    const ivValue = getIV(strikes[xIndex], expiries[zIndex]);
-    positions.setY(i, ivValue * 4); 
+for (let i = 0; i < callPos.count; i++) {
+    const x = callPos.getX(i);
+    const z = callPos.getZ(i);
+    
+    const callIv = calcIV(x, z, 'call');
+    const putIv = calcIV(x, z, 'put');
+    const strike = (100 + x * 5).toFixed(2);
+    const days = Math.round((z + 5) * 30);
+
+    callPos.setY(i, callIv * 3); // Height mapping
+
+    // Build Dataframe View
+    const row = document.createElement('tr');
+    row.innerHTML = `
+        <td style="padding: 8px; border-bottom: 1px solid #222;">${strike}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #222;">${days}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #222; color: #00ff88;">${(callIv * 100).toFixed(2)}%</td>
+        <td style="padding: 8px; border-bottom: 1px solid #222; color: #ff3366;">${(putIv * 100).toFixed(2)}%</td>
+    `;
+    tableBody.appendChild(row);
+    tableRowRefs.push(row);
+    csvRows.push([strike, days, callIv, putIv]);
 }
-geometry.computeVertexNormals();
+callGeo.computeVertexNormals();
 
-// 7. MATERIAL & MESH
-const material = new THREE.MeshPhongMaterial({
-    color: 0x00ffcc,
-    side: THREE.DoubleSide,
-    wireframe: true,
+const callSurface = new THREE.Mesh(callGeo, new THREE.MeshPhongMaterial({
+    color: 0x00f2ff, wireframe: true, side: THREE.DoubleSide, transparent: true, opacity: 0.8
+}));
+callSurface.rotation.x = -Math.PI / 2;
+scene.add(callSurface);
+
+// --- 4. EXPORT LOGIC ---
+document.getElementById('exportBtn').onclick = () => {
+    let csvContent = "data:text/csv;charset=utf-8," + csvRows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "options_chain_data.csv");
+    document.body.appendChild(link);
+    link.click();
+};
+
+// --- 5. RAYCASTING & SYNC ---
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const dot = new THREE.Mesh(new THREE.SphereGeometry(0.12), new THREE.MeshBasicMaterial({color: 0xffffff}));
+scene.add(dot);
+
+viewport.addEventListener('mousemove', (e) => {
+    const rect = viewport.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / viewport.clientWidth) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / viewport.clientHeight) * 2 + 1;
 });
 
-const surface = new THREE.Mesh(geometry, material);
-surface.rotation.x = -Math.PI / 2;
-scene.add(surface);
-
-// Color Picker Listener
-document.getElementById('colorPicker').onchange = (e) => {
-    material.color.setHex(parseInt(e.target.value));
-    icon.querySelector('svg').setAttribute('stroke', e.target.value.replace('0x', '#'));
-};
-
-// 8. HELPERS
-scene.add(new THREE.GridHelper(20, 20, 0x333333, 0x222222));
-scene.add(new THREE.AxesHelper(5));
-
-// 9. ANIMATION LOOP
+let activeIdx = -1;
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObject(callSurface);
+
+    if (intersects.length > 0) {
+        const idx = intersects[0].face.a; // Use vertex A of the intersected face
+        dot.position.copy(intersects[0].point);
+        dot.visible = true;
+
+        if (idx !== activeIdx) {
+            if (activeIdx !== -1) tableRowRefs[activeIdx].style.background = 'transparent';
+            const row = tableRowRefs[idx];
+            row.style.background = '#223344';
+            row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            activeIdx = idx;
+        }
+    } else {
+        dot.visible = false;
+    }
     renderer.render(scene, camera);
 }
 
 window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+    camera.aspect = viewport.clientWidth / viewport.clientHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
 animate();
